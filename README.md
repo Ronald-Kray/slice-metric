@@ -5,6 +5,11 @@ Road surveys measure cracks by length (for example ASTM D6433), so a crack metri
 is easier to relate to a survey. SLICE hardly changes when a mask is drawn thinner or thicker,
 it drops when crack length is missed or when stray length is added, and it needs no tolerance radius.
 
+![SLICE in 25 seconds: input, how it is computed, output, and what changes it](docs/overview.svg)
+
+*The whole idea in six scenes: two input masks, the matched centreline, the score, the printed output,
+then width (SLICE stays, IoU falls) and stray fragments (SLICE falls).*
+
 Everything is in one file, `slice_metric.py`. The figures below use the example masks in `example/`,
 and every number in them is computed with that file.
 
