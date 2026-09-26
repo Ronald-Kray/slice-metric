@@ -7,7 +7,7 @@ import os
 import numpy as np
 import pytest
 
-from slice_metric import SliceResult, load_mask, skeleton_length, slice_metric, slice_pool, slice_pooled
+from slice_metric import SliceResult, load_mask, skeleton_length, slice_metric, slice_pool, slice_pooled, slice_report
 
 H, W = 40, 120
 
@@ -103,13 +103,24 @@ def test_pooled_empty_masks():
     assert r.SLICE == pytest.approx(47 / (47 + 50 + 97))
 
 
-def test_accepts_0_1_integers():
+def test_accepts_0_1_and_0_255_integers():
     assert slice_metric(G.astype(np.uint8), G.astype(int)) == slice_metric(G, G)
+    P = TABLE["left half of G (c 10-59)"][0]
+    assert slice_metric(G.astype(np.uint8) * 255, P.astype(np.uint8) * 255) == slice_metric(G, P)
+
+
+def test_non_contiguous_arrays():
+    """Cropped or transposed views give the same result as copies."""
+    P = TABLE["G + square r 26-39, c 50-63"][0]
+    assert slice_metric(G[:, 5:], P[:, 5:]) == slice_metric(G[:, 5:].copy(), P[:, 5:].copy())
+    assert slice_metric(G.T, P.T) == slice_metric(G.T.copy(), P.T.copy())
 
 
 def test_rejects_non_binary_and_size_mismatch():
     with pytest.raises(ValueError):
-        slice_metric(G, G.astype(np.uint8) * 255)
+        slice_metric(G, G.astype(np.uint8) * 2)
+    with pytest.raises(ValueError):
+        slice_metric(G, np.where(G, 0.7, 0.2))
     with pytest.raises(ValueError):
         slice_metric(G, np.zeros((H, W + 1), bool))
     with pytest.raises(ValueError):
@@ -132,12 +143,27 @@ def test_fig1b_example():
 
 
 def test_example_folder_matches_saved_results(tmp_path):
-    """Running the command on example/ reproduces example/output/slice_results.csv."""
+    """Running the command on example/ reproduces example/output/slice_results.csv and its pictures."""
+    from PIL import Image
     import slice_metric as sm
     assert sm._main([os.path.join(HERE, "example", "gt"), os.path.join(HERE, "example", "pred"), "--out", str(tmp_path)]) == 0
     saved = open(os.path.join(HERE, "example", "output", "slice_results.csv")).read()
     assert open(tmp_path / "slice_results.csv").read() == saved
-    assert len(list(tmp_path.glob("*_slice.png"))) == 10
+    made = sorted(tmp_path.glob("*_slice.png"))
+    assert len(made) == 10
+    for f in made:
+        ref = Image.open(os.path.join(HERE, "example", "output", f.name)).convert("RGB")
+        assert np.array_equal(np.array(Image.open(f).convert("RGB")), np.array(ref))
+
+
+def test_report_of_example_folder():
+    """slice_report gives the pooled values printed by the command line (README section 3)."""
+    names = sorted(n for n in os.listdir(os.path.join(HERE, "example", "gt")))
+    rep = slice_report([(os.path.join(HERE, "example", "gt", n), os.path.join(HERE, "example", "pred", n)) for n in names])
+    assert rep["n"] == 10 and (rep["pooled"].a1, rep["pooled"].a2, rep["pooled"].a3) == (4861, 1600, 214)
+    assert [round(rep[k], 3) for k in ("SLICE", "mean_SLICE", "a2/Lg", "a3/Lg", "IoU", "precision")] == \
+        [0.728, 0.757, 0.248, 0.033, 0.428, 0.512]
+    assert (round(rep["w_G"], 2), round(rep["w_P"], 2)) == (2.97, 5.34)
 
 
 def test_image_files_and_command_line(tmp_path, capsys):
@@ -163,3 +189,33 @@ def test_image_files_and_command_line(tmp_path, capsys):
     assert sm.slice_metric(str(tmp_path / "red.png"), G).SLICE == 1.0
     assert sm._main([str(tmp_path / "gt.png"), str(tmp_path / "pred.png"), "--out", str(tmp_path / "res")]) == 0
     assert (tmp_path / "res" / "slice_results.csv").is_file() and (tmp_path / "res" / "pred_slice.png").is_file()
+
+
+def test_mask_files_and_mistakes(tmp_path, capsys):
+    """Alpha-only masks, warnings for grey-level or empty files, and clear messages for common mistakes."""
+    from PIL import Image
+    import slice_metric as sm
+    G = np.zeros((40, 120), bool); G[18:23, 10:110] = True
+    rgba = np.zeros((40, 120, 4), np.uint8); rgba[..., :3] = 255; rgba[G, 3] = 255     # white, crack only in alpha
+    Image.fromarray(rgba).save(tmp_path / "alpha.png")
+    assert np.array_equal(load_mask(tmp_path / "alpha.png"), G)
+    rgba[..., :3] = 0                                                                   # black crack on a transparent white background
+    rgba[~G, :3] = 255
+    Image.fromarray(rgba).save(tmp_path / "alpha2.png")
+    assert np.array_equal(load_mask(tmp_path / "alpha2.png"), G)
+    soft = (G * 180 + np.linspace(0, 60, 120)).astype(np.uint8)                          # a probability map, not thresholded
+    Image.fromarray(soft).save(tmp_path / "soft.png")
+    with pytest.warns(UserWarning, match="grey levels"):
+        assert np.array_equal(load_mask(tmp_path / "soft.png"), G)
+    Image.fromarray(np.zeros((40, 120), np.uint8)).save(tmp_path / "empty.png")
+    with pytest.warns(UserWarning, match="empty"):
+        load_mask(tmp_path / "empty.png")
+    (tmp_path / "g").mkdir(); (tmp_path / "p").mkdir()
+    Image.fromarray((G * 255).astype(np.uint8)).save(tmp_path / "g" / "a.png")
+    Image.fromarray((G * 255).astype(np.uint8)).save(tmp_path / "p" / "a_pred.png")    # names do not match
+    assert sm._main([str(tmp_path / "g"), str(tmp_path / "p")]) == 1
+    assert "same names" in capsys.readouterr().out
+    Image.fromarray(np.full((20, 60), 255, np.uint8)).save(tmp_path / "p" / "a.png")   # size mismatch
+    assert sm._main([str(tmp_path / "g"), str(tmp_path / "p")]) == 1
+    assert "a.png: G and P must have the same size" in capsys.readouterr().out
+    assert sm._main([str(tmp_path / "g" / "a.png"), str(tmp_path / "p")]) == 2          # a file and a folder
