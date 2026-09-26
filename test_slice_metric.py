@@ -1,4 +1,4 @@
-"""Test cases of Table 2 (Section 2.4) and the worked example of Section 2.2 (Fig. 1b).
+"""Test cases of Table 2 (Section 2.4), the worked example of Section 2.2 (Fig. 1b) and the example folder.
 
 Run: python -m pytest -q
 """
@@ -7,7 +7,7 @@ import os
 import numpy as np
 import pytest
 
-from slice_metric import SliceResult, skeleton_length, slice_metric, slice_pool, slice_pooled
+from slice_metric import SliceResult, load_mask, skeleton_length, slice_metric, slice_pool, slice_pooled
 
 H, W = 40, 120
 
@@ -117,29 +117,27 @@ def test_rejects_non_binary_and_size_mismatch():
 
 
 # Worked example of Section 2.2 (Fig. 1b): CrackForest image 044, rows 70-189, columns 0-359,
-# reference GT against the U-Net output. The masks are not part of this package; set SLICE_EXAMPLE_DIR
-# to a folder with reference_gt/CF_044.png and predictions/CF_044/unet.png to run this test.
-EXAMPLE_DIR = os.environ.get("SLICE_EXAMPLE_DIR", "")
+# reference GT against the U-Net output (example/gt/CF_044.png and example/pred/CF_044.png).
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-@pytest.mark.skipif(not os.path.isfile(os.path.join(EXAMPLE_DIR, "reference_gt", "CF_044.png")),
-                    reason="example masks not available (set SLICE_EXAMPLE_DIR)")
 def test_fig1b_example():
-    from PIL import Image
-
-    def load(path):  # 8-bit mask file: crack above 127
-        return np.array(Image.open(path).convert("L")) > 127
-
-    g = load(os.path.join(EXAMPLE_DIR, "reference_gt", "CF_044.png"))
-    p = load(os.path.join(EXAMPLE_DIR, "predictions", "CF_044", "unet.png"))
-    if p.shape != g.shape:  # nearest-neighbour resize to the GT size
-        p = np.array(Image.fromarray(p.astype(np.uint8) * 255).resize((g.shape[1], g.shape[0]), Image.NEAREST)) > 127
-    g, p = g[70:190, 0:360], p[70:190, 0:360]
+    g = load_mask(os.path.join(HERE, "example", "gt", "CF_044.png"))[70:190, 0:360]
+    p = load_mask(os.path.join(HERE, "example", "pred", "CF_044.png"))[70:190, 0:360]
     r = slice_metric(g, p)
     assert (r.Lg, r.Lp, skeleton_length(g & p)) == (596, 368, 321)
     assert (r.a1, r.a2, r.a3) == (321, 275, 47)
     assert r.SLICE == pytest.approx(321 / 643)
     assert round(r.SLICE, 2) == 0.50
+
+
+def test_example_folder_matches_saved_results(tmp_path):
+    """Running the command on example/ reproduces example/output/slice_results.csv."""
+    import slice_metric as sm
+    assert sm._main([os.path.join(HERE, "example", "gt"), os.path.join(HERE, "example", "pred"), "--out", str(tmp_path)]) == 0
+    saved = open(os.path.join(HERE, "example", "output", "slice_results.csv")).read()
+    assert open(tmp_path / "slice_results.csv").read() == saved
+    assert len(list(tmp_path.glob("*_slice.png"))) == 10
 
 
 def test_image_files_and_command_line(tmp_path, capsys):
@@ -163,3 +161,5 @@ def test_image_files_and_command_line(tmp_path, capsys):
     rgb = np.zeros((40, 120, 3), np.uint8); rgb[G] = (255, 0, 0)                  # red-on-black mask
     Image.fromarray(rgb).save(tmp_path / "red.png")
     assert sm.slice_metric(str(tmp_path / "red.png"), G).SLICE == 1.0
+    assert sm._main([str(tmp_path / "gt.png"), str(tmp_path / "pred.png"), "--out", str(tmp_path / "res")]) == 0
+    assert (tmp_path / "res" / "slice_results.csv").is_file() and (tmp_path / "res" / "pred_slice.png").is_file()

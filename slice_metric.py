@@ -30,6 +30,7 @@ Quick use:
 Command line (one image pair, or two folders with matching file names):
     python slice_metric.py gt.png pred.png
     python slice_metric.py gt_folder pred_folder
+    python slice_metric.py gt_folder pred_folder --out results   # also save a CSV table and one picture per image
 """
 import os
 import sys
@@ -39,7 +40,7 @@ import numpy as np
 from skimage.morphology import skeletonize
 
 __version__ = "1.0.0"
-__all__ = ["SliceResult", "slice_metric", "slice_pooled", "slice_pool", "skeleton_length", "load_mask"]
+__all__ = ["SliceResult", "slice_metric", "slice_pooled", "slice_pool", "skeleton_length", "load_mask", "save_overlay"]
 
 
 class SliceResult(NamedTuple):
@@ -122,11 +123,49 @@ def slice_pooled(pairs: Iterable[Tuple[Union[np.ndarray, str], Union[np.ndarray,
     return slice_pool(slice_metric(G, P) for G, P in pairs)
 
 
+def save_overlay(G, P, path) -> None:
+    """Save a picture of one result on a white background: GT area light orange, prediction area light blue,
+    overlap light grey, and the centrelines that SLICE counts: matched a1 (green), missed GT centreline (orange),
+    spurious predicted centreline (magenta)."""
+    from PIL import Image
+    g, p = _binary(G, "G"), _binary(P, "P")
+    img = np.full(g.shape + (3,), 255, np.uint8)
+    img[g] = (250, 212, 185); img[p] = (190, 215, 245); img[g & p] = (205, 205, 205)
+    sg, sp = skeletonize(g, method="zhang"), skeletonize(p, method="zhang")
+    img[sg & ~p] = (213, 94, 0)                                   # missed
+    img[sp & ~g] = (227, 26, 109)                                 # spurious
+    img[skeletonize(g & p, method="zhang")] = (0, 158, 115)       # matched
+    Image.fromarray(img).quantize(colors=8, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).save(path, optimize=True)
+
+
 def _main(argv) -> int:
+    out_dir = None
+    if "--out" in argv:
+        i = argv.index("--out")
+        if i + 1 >= len(argv):
+            print("--out needs a folder name"); return 2
+        out_dir = argv[i + 1]; argv = argv[:i] + argv[i + 2:]
+        os.makedirs(out_dir, exist_ok=True)
     if len(argv) != 2:
-        print("usage: python slice_metric.py GT.png PRED.png\n       python slice_metric.py GT_FOLDER PRED_FOLDER")
+        print("usage: python slice_metric.py GT.png PRED.png [--out FOLDER]\n"
+              "       python slice_metric.py GT_FOLDER PRED_FOLDER [--out FOLDER]")
         return 2
     gt, pred = argv
+    rows = []
+
+    def keep(name, g, p, r):
+        rows.append((name, r))
+        if out_dir:
+            save_overlay(g, p, os.path.join(out_dir, os.path.splitext(name)[0] + "_slice.png"))
+
+    def write_csv(pooled=None):
+        if not out_dir:
+            return
+        with open(os.path.join(out_dir, "slice_results.csv"), "w") as f:
+            f.write("image,SLICE,a1_matched,a2_missed,a3_spurious,Lg,Lp\n")
+            for n, r in rows + ([("POOLED", pooled)] if pooled else []):
+                f.write(f"{n},{r.SLICE:.4f},{r.a1},{r.a2},{r.a3},{r.Lg},{r.Lp}\n")
+        print(f"saved {os.path.join(out_dir, 'slice_results.csv')} and {len(rows)} picture(s) in {out_dir}")
     if os.path.isdir(gt) and os.path.isdir(pred):
         ext = (".png", ".bmp", ".tif", ".tiff", ".jpg", ".jpeg")
         names = sorted(n for n in os.listdir(gt) if n.lower().endswith(ext))
@@ -138,20 +177,25 @@ def _main(argv) -> int:
             g = load_mask(os.path.join(gt, n))
             pp = os.path.join(pred, n)
             if os.path.isfile(pp):
-                r = slice_metric(g, pp)
+                p = load_mask(pp)
                 note = ""
             else:  # no prediction file: scored as an empty prediction, so its GT length counts as missed
-                r = slice_metric(g, np.zeros_like(g))
+                p = np.zeros_like(g)
                 note = "  (no prediction file: scored as empty)"
-            results.append(r)
+            r = slice_metric(g, p)
+            results.append(r); keep(n, g, p, r)
             print(f"{n:30s} {r.SLICE:6.3f} {r.a1:6d} {r.a2:6d} {r.a3:6d}{note}")
         pr = slice_pool(results)
         mean = sum(r.SLICE for r in results) / len(results)
         print(f"\n{len(results)} images   pooled SLICE {pr.SLICE:.3f}   per-image mean {mean:.3f}")
         print(f"missed a2/Lg {pr.a2 / pr.Lg if pr.Lg else 0:.3f}   spurious a3/Lg {pr.a3 / pr.Lg if pr.Lg else 0:.3f}")
+        write_csv(pr)
         return 0
-    r = slice_metric(gt, pred)
+    g, p = load_mask(gt), load_mask(pred)
+    r = slice_metric(g, p)
     print(f"SLICE {r.SLICE:.3f}   matched a1 {r.a1} px   missed a2 {r.a2} px   spurious a3 {r.a3} px   (Lg {r.Lg}, Lp {r.Lp})")
+    keep(os.path.basename(pred), g, p, r)
+    write_csv()
     return 0
 
 
