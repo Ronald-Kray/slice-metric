@@ -168,7 +168,7 @@ outside the GT mask. The pictures in `example/output/`:
 | <img src="example/images/CF_106.jpg" width="400"> | <img src="example/output/CF_106_slice.png" width="400"> | 0.654 |
 | <img src="example/images/CF_113.jpg" width="400"> | <img src="example/output/CF_113_slice.png" width="400"> | 0.739 |
 
-## 4. Computing SLICE: a1, a2, a3
+## 4. SLICE computation: a1, a2, a3
 
 ![Computing SLICE step by step on CF_044](docs/how_it_works.webp)
 
@@ -195,18 +195,18 @@ These figures repeat the constructions of Experiment 1 of the paper on one image
 GT centreline redrawn with a plus-shaped 3 × 3 element; the GT is not changed. The paper uses 30 images, so its
 values differ slightly.
 
-**Mask width (Experiment 1a).** Prediction widths of 1, 3, 5, 7, 11 and 17 px keep SLICE at 0.98 to 1.00,
+**Mask width (Experiment 1-1).** Prediction widths of 1, 3, 5, 7, 11 and 17 px keep SLICE at 0.98 to 1.00,
 while IoU peaks at 0.63 (3 px) and falls to 0.12 (17 px).
 
 ![Mask width: SLICE stays, IoU falls](docs/width.webp)
 
-**Missed and spurious length (Experiment 1b).** From the 5-px prediction, 7-px squares remove 10 to 50% of the
+**Missed and spurious length (Experiment 1-2).** From the 5-px prediction, 7-px squares remove 10 to 50% of the
 pixels (missed length), or straight fragments 1 px wide and 3 to 7 px long (nominal) add 10 to 50% (spurious length).
 At 50%, SLICE falls to 0.41 (missed) and 0.28 (spurious); IoU changes less.
 
 ![Detection errors: missed and spurious length lower SLICE](docs/errors.webp)
 
-## Preparing the masks
+## Mask preparation
 
 - The prediction has the same size as the GT. Resize it first and note the interpolation
   (the paper used nearest-neighbour interpolation).
@@ -214,7 +214,7 @@ At 50%, SLICE falls to 0.41 (missed) and 0.28 (spurious); IoU changes less.
   The paper read 8-bit masks as crack above 127, as `slice_metric.py` does.
 - No hole filling, removal of small parts or cropping. These steps change the lengths.
 
-## Reporting SLICE
+## Reporting guideline
 
 SLICE measures length, not area, so it should be reported with IoU. Following Table 4 of the paper, report for
 each GT set separately (`slice_report` and the folder command give all the numbers):
@@ -282,13 +282,17 @@ only. The masks are the dataset's ground truth saved as 1-bit PNG. Please cite:
 - L. Cui, Z. Qi, Z. Chen, F. Meng, Y. Shi, Pavement distress detection using random decision forests,
   International Conference on Data Science (2015) 95–102.
 
-The predictions are the outputs of the U-Net used in the paper, trained on public crack data from earlier studies
-that include these images. They serve as realistic inputs for the metric, not as a test of model accuracy.
+The predictions are the outputs of the public pre-trained U-Net used in the paper
+(https://github.com/khanhha/crack_segmentation, weights model_unet_vgg_16_best.pt), used without further training.
+Its training data likely include these images. The predictions serve as realistic inputs for the metric, not as a
+test of model accuracy.
 
 Citation for SLICE:
-H. Ann, H. Park, J.-J. Lee, SLICE (Skeleton-Length IoU for Crack Evaluation): a centreline-length metric
-with low mask-width dependence for road crack segmentation, in preparation.
+H. Ann, H. Park, J.-J. Lee, Length, not area: SLICE, a centreline metric for road crack segmentation,
+in preparation.
 
+`test_images.csv` lists the 30 test images of the paper (10 each from CrackForest, CrackTree200 and Crack500)
+with the mask width of each reference ground truth (mask area divided by centreline length, in px).
 The other data of the paper (annotator masks, rater responses, evaluation scripts) are shared on request.
 
 ## License
